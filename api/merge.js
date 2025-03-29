@@ -1,12 +1,15 @@
-import { exec } from "child_process";
-import { writeFile, readFile, createWriteStream } from "fs";
-import { pipeline } from "stream";
-import { promisify } from "util";
-import ffmpeg from "ffmpeg-static";
+const { exec } = require("child_process");
+const fs = require("fs");
+const https = require("https");
+const ffmpeg = require("ffmpeg-static");
+const path = require("path");
+const { promisify } = require("util");
+const { pipeline } = require("stream");
 
 const streamPipeline = promisify(pipeline);
+const execAsync = promisify(exec);
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST method allowed" });
   }
@@ -16,11 +19,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing videoUrl or audioUrl" });
   }
 
-  const download = async (url, filePath) => {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to download ${url}`);
-    await streamPipeline(response.body, createWriteStream(filePath));
-  };
+  const download = (url, destPath) =>
+    new Promise((resolve, reject) => {
+      https.get(url, (response) => {
+        const fileStream = fs.createWriteStream(destPath);
+        response.pipe(fileStream);
+        fileStream.on("finish", () => {
+          fileStream.close(resolve);
+        });
+      }).on("error", reject);
+    });
 
   try {
     const videoPath = "/tmp/input.mp4";
@@ -31,21 +39,15 @@ export default async function handler(req, res) {
     await download(audioUrl, audioPath);
 
     const cmd = `${ffmpeg} -y -i ${videoPath} -i ${audioPath} -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 -shortest ${outputPath}`;
+    await execAsync(cmd);
 
-    await new Promise((resolve, reject) => {
-      exec(cmd, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-
-    const outputBuffer = await readFile(outputPath);
+    const mergedBuffer = fs.readFileSync(outputPath);
 
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Disposition", "attachment; filename=merged.mp4");
-    res.send(outputBuffer);
+    res.end(mergedBuffer);
   } catch (err) {
-    console.error(err);
+    console.error("Merge failed:", err);
     res.status(500).json({ error: "Merging failed", details: err.message });
   }
-}
+};
