@@ -1,5 +1,4 @@
 {
-  "type": "module",
   "dependencies": {
     "ffmpeg-static": "^4.4.0"
   }
