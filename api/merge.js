@@ -1,8 +1,10 @@
 import { exec } from "child_process";
-import { writeFile, readFile } from "fs/promises";
-import https from "https";
+import { writeFile, readFile, createWriteStream } from "fs";
+import { pipeline } from "stream";
+import { promisify } from "util";
 import ffmpeg from "ffmpeg-static";
-import path from "path";
+
+const streamPipeline = promisify(pipeline);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -14,14 +16,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing videoUrl or audioUrl" });
   }
 
-  const download = (url, filepath) =>
-    new Promise((resolve, reject) => {
-      const file = require("fs").createWriteStream(filepath);
-      https.get(url, (response) => {
-        response.pipe(file);
-        file.on("finish", () => file.close(resolve));
-      }).on("error", reject);
-    });
+  const download = async (url, filePath) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to download ${url}`);
+    await streamPipeline(response.body, createWriteStream(filePath));
+  };
 
   try {
     const videoPath = "/tmp/input.mp4";
